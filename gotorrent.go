@@ -36,11 +36,10 @@ func start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
-	m, err := client.Parse(f)
+	t, err := c.NewTorrent(f)
 	if err != nil {
 		return err
 	}
-	t := c.NewTorrent(m)
-	fmt.Println(t)
+	t.Announce()
 	return nil
 }

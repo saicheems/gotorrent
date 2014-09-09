@@ -3,6 +3,7 @@ package client
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"strconv"
@@ -37,22 +38,26 @@ func New(localPort string) *Client {
 
 // NewTorrent returns an intialized torrent object. It holds a reference to the Client object which
 // it spawned from in order to have the peerID/localPort.
-func (c *Client) NewTorrent(m *MetaInfo) *Torrent {
+func (c *Client) NewTorrent(r io.Reader) (*Torrent, error) {
+	m, err := Parse(r)
+	if err != nil {
+		return nil, err
+	}
 	t := new(Torrent)
 	t.Client = c
 	t.AnnounceURL = m.Announce
 	t.Event = "started"
 	t.InfoHash = m.InfoHash
 	t.MetaInfo = m
-	return t
+	return t, nil
 }
 
 // GetAnnounceURL returns the url to query the tracker for an announce with all parameters set
 // according to the passed client and torrent structs.
-func (t *Torrent) GetAnnounceURL(peerID string, localPort string) string {
+func (t *Torrent) GetAnnounceURL() string {
 	v := url.Values{}
-	v.Add("peer_id", peerID)
-	v.Add("port", localPort)
+	v.Add("peer_id", t.Client.PeerID)
+	v.Add("port", t.Client.LocalPort[1:]) // TODO: This is a bad solution...
 	v.Add("event", t.Event)
 	v.Add("info_hash", t.MetaInfo.InfoHash)
 	// These are int64s so we have to use FormatInt.
