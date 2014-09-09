@@ -1,4 +1,4 @@
-package announce
+package client
 
 import (
 	"bytes"
@@ -19,9 +19,9 @@ type AnnounceResponse struct {
 	Peers          string "peers"
 }
 
-// Send sends an announce signal to a url and returns the response formatted to an
+// Announce sends an announce signal to a url and returns the response formatted to an
 // AnnounceResponse.
-func Send(url string) (*AnnounceResponse, error) {
+func Announce(url string) (*AnnounceResponse, error) {
 	res, err := http.Get(url)
 	if err != nil {
 		return nil, err

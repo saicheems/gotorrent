@@ -1,5 +1,0 @@
-package announce
-
-func TestSend() {
-
-}

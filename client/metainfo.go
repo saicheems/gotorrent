@@ -3,9 +3,8 @@ package client
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/jackpal/bencode-go"
 )
@@ -14,64 +13,69 @@ import (
 var MalformedTorrentError = fmt.Errorf("Malformed torrent file.")
 
 // MetaInfo implements the contents and file structure of a .torrent file.
-type metaInfo struct {
-	Info         infoDict "info"
-	InfoHash     string
+type MetaInfo struct {
+	Info         InfoDict   "info"
 	Announce     string     "announce"
 	AnnounceList [][]string "announce-list"
 	CreationDate string     "creation date"
 	Comment      string     "comment"
 	CreatedBy    string     "created by"
 	Encoding     string     "encoding"
+
+	InfoHash string
 }
 
-type infoDict struct {
+type InfoDict struct {
 	PieceLength int64      "piece length"
 	Pieces      string     "pieces"
 	Private     int64      "private"
 	Name        string     "name"
 	Length      int64      "length"
 	Md5Sum      string     "md5sum"
-	Files       []fileDict "files"
+	Files       []FileDict "files"
 }
 
-type fileDict struct {
+type FileDict struct {
 	Length int64    "length"
 	Md5Sum string   "md5sum"
 	Path   []string "path"
 }
 
-func parse(filePath string) (*metaInfo, error) {
-	m := new(metaInfo)
-	f, err := os.Open(filePath)
+// Parse returns a MetaInfo struct filled in with data from the input stream. The input stream
+// should be a bencoded torrent file. An error is raised if there is a problem in parsing.
+func Parse(r io.Reader) (*MetaInfo, error) {
+	m := new(MetaInfo)
+	// TODO: This will backfire if the torrent file is for some reason too large to fit in
+	// memory.
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(r)
+	obj, err := bencode.Decode(bytes.NewReader(buf.Bytes()))
+	err = bencode.Unmarshal(bytes.NewReader(buf.Bytes()), m)
+	if err != nil {
+		return nil, MalformedTorrentError
+	}
+	m.InfoHash, err = computeSha1Hash(obj)
 	if err != nil {
 		return nil, err
 	}
-	obj, err := bencode.Decode(f)
-	j, err := json.Marshal(obj)
-	if err != nil {
-		return nil, MalformedTorrentError
-	}
+	return m, nil
+}
 
+// computeSha1Hash finds the info dict in bencoded dictionary and returns its sha1 hash.
+func computeSha1Hash(obj interface{}) (string, error) {
 	// Calculate sha1 hash of the info map.
 	top, ok := obj.(map[string]interface{})
 	if !ok {
-		return nil, MalformedTorrentError
+		return "", MalformedTorrentError
 	}
 	info, ok := top["info"]
 	if !ok {
-		return nil, MalformedTorrentError
-	}
-	err = json.Unmarshal(j, m)
-	if err != nil {
-		return nil, MalformedTorrentError
+		return "", MalformedTorrentError
 	}
 	var b bytes.Buffer
 	bencode.Marshal(&b, info)
-
 	// Generate the info hash.
 	hash := sha1.New()
 	hash.Write(b.Bytes())
-	m.InfoHash = string(hash.Sum(nil))
-	return m, nil
+	return string(hash.Sum(nil)), nil
 }
