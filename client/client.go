@@ -1,11 +1,24 @@
 package client
 
-// Client contains the information necessary for the client to run torrents.
-type Client struct {
-	peerID string
-	port   string
+import (
+	"crypto/rand"
+	"net"
+)
+
+// Torrent contains the state information of a torrent.
+type Torrent struct {
+	AnnounceURL string
+	Event       string
+	InfoHash    string
+	Uploaded    int64
+	Downloaded  int64
+	Left        int64
+	MetaInfo    *MetaInfo
+	Peers       map[net.Conn]string
 }
 
-// torrent contains the state information of a torrent.
-type torrent struct {
+func GeneratePeerID() string {
+	peerId := make([]byte, 20)
+	rand.Read(peerId)
+	return string(peerId)
 }
