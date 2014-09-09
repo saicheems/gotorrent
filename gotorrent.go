@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/codegangsta/cli"
+	"github.com/saicheems/gotorrent/client"
 )
 
 func main() {
@@ -28,9 +29,18 @@ func main() {
 	app.Run(os.Args)
 }
 
-func start(port string, filePath string) {
-	fmt.Println(port, filePath)
-}
-
-func stop() {
+func start(localPort string, filePath string) error {
+	c := client.New(localPort)
+	// Parse torrent and get Torrent struct.
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	m, err := client.Parse(f)
+	if err != nil {
+		return err
+	}
+	t := c.NewTorrent(m)
+	fmt.Println(t)
+	return nil
 }

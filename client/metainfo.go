@@ -17,7 +17,7 @@ type MetaInfo struct {
 	Info         InfoDict   "info"
 	Announce     string     "announce"
 	AnnounceList [][]string "announce-list"
-	CreationDate string     "creation date"
+	CreationDate int64      "creation date"
 	Comment      string     "comment"
 	CreatedBy    string     "created by"
 	Encoding     string     "encoding"
@@ -28,7 +28,7 @@ type MetaInfo struct {
 type InfoDict struct {
 	PieceLength int64      "piece length"
 	Pieces      string     "pieces"
-	Private     int64      "private"
+	Private     string     "private"
 	Name        string     "name"
 	Length      int64      "length"
 	Md5Sum      string     "md5sum"
@@ -49,8 +49,8 @@ func Parse(r io.Reader) (*MetaInfo, error) {
 	// memory.
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(r)
+	err := bencode.Unmarshal(bytes.NewReader(buf.Bytes()), m)
 	obj, err := bencode.Decode(bytes.NewReader(buf.Bytes()))
-	err = bencode.Unmarshal(bytes.NewReader(buf.Bytes()), m)
 	if err != nil {
 		return nil, MalformedTorrentError
 	}
