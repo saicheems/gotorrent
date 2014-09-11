@@ -24,15 +24,13 @@ type AnnounceResponse struct {
 
 // Announce sends an announce signal to a url and returns the response formatted to an
 // AnnounceResponse.
-func (t *Torrent) Announce() (*AnnounceResponse, error) {
-	url := t.GetAnnounceURL()
+func Announce(url string) (*AnnounceResponse, error) {
 	res, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(res.Body)
-	fmt.Println(string(buf.Bytes()))
 	annRes := new(AnnounceResponse)
 	err = bencode.Unmarshal(buf, annRes)
 	if err != nil {

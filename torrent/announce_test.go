@@ -28,3 +28,10 @@ func TestAnnounce(t *testing.T) {
 		assert.Equal(res, val)
 	}
 }
+
+func TestGetAnnounceURL(t *testing.T) {
+	tor := &Torrent{PeerID: "test", LocalPort: ":6881", Event: "started", MetaInfo: &MetaInfo{InfoHash: "test"}, Downloaded: 1234, Uploaded: 1234, Left: 1234, AnnounceURL: "http://test.com/announce"}
+	url := tor.GetAnnounceURL()
+	assert := assert.New(t)
+	assert.Equal(url, "http://test.com/announce?compact=1&downloaded=1234&event=started&info_hash=test&left=1234&numwant=5&peer_id=test&port=6881&uploaded=1234")
+}
