@@ -1,11 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 
 	"github.com/codegangsta/cli"
-	"github.com/saicheems/gotorrent/client"
+	"github.com/saicheems/gotorrent/torrent"
 )
 
 func main() {
@@ -30,16 +31,21 @@ func main() {
 }
 
 func start(localPort string, filePath string) error {
-	c := client.New(localPort)
 	// Parse torrent and get Torrent struct.
 	f, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
-	t, err := c.NewTorrent(f)
+	t, err := torrent.New(generatePeerID(), localPort, f)
 	if err != nil {
 		return err
 	}
 	t.Announce()
 	return nil
+}
+
+func generatePeerID() string {
+	peerId := make([]byte, 20)
+	rand.Read(peerId)
+	return string(peerId)
 }
