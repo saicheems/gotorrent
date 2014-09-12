@@ -24,13 +24,15 @@ func main() {
 		if len(c.Args()) != 1 {
 			fmt.Println("one argument is required - a filepath to a .torrent file")
 		} else {
-			start(c.String("port"), c.Args()[0])
+			port := c.String("port")
+			filePath := c.Args()[0]
+			Start(port, filePath)
 		}
 	}
 	app.Run(os.Args)
 }
 
-func start(localPort string, filePath string) error {
+func Start(localPort string, filePath string) error {
 	// Parse torrent and get Torrent struct.
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -40,7 +42,12 @@ func start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
-	t.Announce()
+	annResp, err := torrent.Announce(t.GetAnnounceURL())
+	if err == nil {
+		fmt.Println(annResp.PeerAddresses())
+	} else {
+		fmt.Println(err)
+	}
 	return nil
 }
 

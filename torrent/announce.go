@@ -3,6 +3,7 @@ package torrent
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -58,4 +59,23 @@ func (t *Torrent) GetAnnounceURL() string {
 	v.Add("compact", "1") // We will always make compact requests.
 
 	return fmt.Sprintf("%s?%s", t.AnnounceURL, v.Encode())
+}
+
+// GetPeerAddresses returns a string list containing the addresses of all peers in the
+// AnnounceResponse.
+func (response *AnnounceResponse) PeerAddresses() []string {
+	peers := response.Peers
+	addresses := make([]string, 0)
+	for i := 0; i < len(peers); i += 6 {
+		addresses = append(addresses, decodePeerAddress(peers[i:i+6]))
+	}
+	return addresses
+}
+
+// decodePeerAddress returns the readable address of a peer from its compact 6 byte chunk. The input
+// string must be 6 bytes long.
+func decodePeerAddress(chunk string) string {
+	ip := net.IPv4(chunk[0], chunk[1], chunk[2], chunk[3])
+	remotePort := 256*int(chunk[4]) + int(chunk[5]) // Port is given in network encoding.
+	return fmt.Sprintf("%s:%d", ip.String(), remotePort)
 }

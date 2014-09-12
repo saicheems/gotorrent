@@ -52,7 +52,7 @@ func SendMessage(conn net.Conn, messageType int, payload []byte) {
 }
 
 func ReadMessage(data []byte) (int, []byte) {
-
+	return 0, nil
 }
 
 func sendHandshake(conn net.Conn, infoHash string, peerID string) error {

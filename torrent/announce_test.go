@@ -35,3 +35,10 @@ func TestGetAnnounceURL(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(url, "http://test.com/announce?compact=1&downloaded=1234&event=started&info_hash=test&left=1234&numwant=5&peer_id=test&port=6881&uploaded=1234")
 }
+
+func TestGetPeerAddresses(t *testing.T) {
+	assert := assert.New(t)
+	annResp := new(AnnounceResponse)
+	annResp.Peers = "abcdefghijkl"
+	assert.Equal(annResp.PeerAddresses(), []string{"97.98.99.100:25958", "103.104.105.106:27500"})
+}
