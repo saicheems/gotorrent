@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/codegangsta/cli"
 	"github.com/saicheems/gotorrent/torrent"
@@ -42,13 +43,35 @@ func Start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
-	annResp, err := torrent.Announce(t.GetAnnounceURL())
-	if err == nil {
-		fmt.Println(annResp.PeerAddresses())
-	} else {
-		fmt.Println(err)
-	}
+	go Announcer(t)
+	fmt.Scanf("\n")
 	return nil
+}
+
+func Announcer(t *torrent.Torrent) {
+	for {
+		annResp, err := torrent.Announce(t.GetAnnounceURL())
+		if err != nil {
+			fmt.Println("Tracker announce failed")
+			continue
+		}
+		addrs := annResp.PeerAddresses()
+		for _, addr := range addrs {
+			conn, err := torrent.Connect(addr)
+			if err != nil {
+				fmt.Println("Connection failed")
+				continue
+			}
+			fmt.Println("Connection successful to peer", addr)
+			err = torrent.Handshake(conn, t.InfoHash, t.PeerID)
+			if err != nil {
+				fmt.Println("Handshake failed")
+				continue
+			}
+			fmt.Println("Handshake successful to peer", addr)
+		}
+		time.Sleep(120 * time.Second)
+	}
 }
 
 func generatePeerID() string {

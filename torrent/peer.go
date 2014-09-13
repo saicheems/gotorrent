@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -10,17 +11,6 @@ import (
 const (
 	connectTimeout = 5
 	pStr           = "BitTorrent protocol"
-
-	KeepAlive = iota
-	Choke
-	Unchoke
-	Interested
-	NotInterested
-	Have
-	Bitfield
-	Request
-	Piece
-	Cancel
 )
 
 // Connect returns a connection to the peer at raddr.
@@ -47,12 +37,61 @@ func Handshake(conn net.Conn, infoHash string, peerID string) error {
 	return nil
 }
 
-func SendMessage(conn net.Conn, messageType int, payload []byte) {
-
+// SendMessage writes the byte formatted Message to the provided connection.
+func SendMessage(conn net.Conn, msg Message) {
+	conn.Write(msg.Format())
 }
 
-func ReadMessage(data []byte) (int, []byte) {
-	return 0, nil
+// ParseMessage returns a struct that implements Message containing all relevant information for a
+// peer message. TODO: Currently returns nil if the parse fails. Should return some kind of error I
+// think instead.
+func ParseMessage(data []byte) Message {
+	// Can't possibly be good data if we don't even have a length.
+	if len(data) < 4 {
+		return nil
+	}
+	length := binary.LittleEndian.Uint32(data[0:4])
+	if length == 0 {
+		return KeepAlive{}
+	}
+	// If the length isn't what it says it is, then fail.
+	if length != uint32(len(data[4:])) {
+		return nil
+	}
+	if length == 1 {
+		switch data[4] {
+		case 0: // choke
+			return Choke{}
+		case 1: // unchoke
+			return Unchoke{}
+		case 2: // interested
+			return Interested{}
+		case 3: // not interested
+			return NotInterested{}
+		}
+	} else if length == 5 {
+		if data[4] == 4 {
+			pieceIndex := binary.LittleEndian.Uint32(data[5:9])
+			return Have{PieceIndex: pieceIndex}
+		}
+	} else if length == 13 {
+		index := binary.LittleEndian.Uint32(data[5:9])
+		begin := binary.LittleEndian.Uint32(data[9:13])
+		length := binary.LittleEndian.Uint32(data[13:17])
+		if data[4] == 6 {
+			return Request{Index: index, Begin: begin, Length: length}
+		} else if data[4] == 8 {
+			return Cancel{Index: index, Begin: begin, Length: length}
+		}
+	}
+	if data[4] == 5 {
+		return Bitfield{Data: data[5 : 5+length-1]}
+	} else if data[4] == 7 {
+		index := binary.LittleEndian.Uint32(data[5:9])
+		begin := binary.LittleEndian.Uint32(data[9:13])
+		return Piece{Index: index, Begin: begin, Block: data[13 : 13+length-9]}
+	}
+	return nil
 }
 
 func sendHandshake(conn net.Conn, infoHash string, peerID string) error {
