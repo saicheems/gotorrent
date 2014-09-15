@@ -3,11 +3,17 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
 	"github.com/codegangsta/cli"
 	"github.com/saicheems/gotorrent/torrent"
+)
+
+const (
+	maxSeekConnections = 1
+	maxConnections     = 55
 )
 
 func main() {
@@ -43,34 +49,86 @@ func Start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
-	go Announcer(t)
+	incomingAddresses := make(chan string)
+	go Announcer(t, incomingAddresses)
+	go PeerManager(localPort, incomingAddresses)
 	fmt.Scanf("\n")
 	return nil
 }
 
-func Announcer(t *torrent.Torrent) {
+// PeerManager starts a service that connects to peers as they come in and spins up peer handling
+// threads. If we're connected to the maximum number of peers configured, the service will reject
+// or close incoming connections.
+func PeerManager(localPort string, incomingAddresses chan string) error {
+	totalConnections := 0
+	peerQuit := make(chan bool) // Channel peers signal on when they die.
+	incomingConnections := make(chan net.Conn)
+
+	ln, err := net.Listen("tcp", localPort)
+	if err != nil {
+		return err
+	}
+	go func(incomingConnections chan net.Conn) {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				continue
+			}
+			incomingConnections <- conn
+		}
+	}(incomingConnections)
+	for {
+		select {
+		case <-peerQuit:
+			totalConnections--
+		default:
+		}
+		select {
+		case in := <-incomingConnections:
+			if totalConnections < maxConnections {
+				go Talker(in, peerQuit)
+				totalConnections++
+			} else {
+				conn := <-incomingConnections
+				conn.Close()
+			}
+		default:
+		}
+		select {
+		case in := <-incomingAddresses:
+			if totalConnections < maxSeekConnections {
+				conn, err := torrent.Connect(in)
+				fmt.Println("Got incoming address...", err)
+				if err == nil {
+					go Talker(conn, peerQuit)
+					totalConnections++
+				}
+			}
+		default:
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil
+}
+
+func Talker(conn net.Conn, peerQuit chan bool) {
+	fmt.Println("Talking to peer.")
+	conn.Close()
+	peerQuit <- true
+	fmt.Println("Quit peer.")
+}
+
+func Announcer(t *torrent.Torrent, incomingConnections chan string) {
 	for {
 		annResp, err := torrent.Announce(t.GetAnnounceURL())
 		if err != nil {
-			fmt.Println("Tracker announce failed")
 			continue
 		}
-		addrs := annResp.PeerAddresses()
-		for _, addr := range addrs {
-			conn, err := torrent.Connect(addr)
-			if err != nil {
-				fmt.Println("Connection failed")
-				continue
-			}
-			fmt.Println("Connection successful to peer", addr)
-			err = torrent.Handshake(conn, t.InfoHash, t.PeerID)
-			if err != nil {
-				fmt.Println("Handshake failed")
-				continue
-			}
-			fmt.Println("Handshake successful to peer", addr)
+		for _, addr := range annResp.PeerAddresses() {
+			fmt.Println(addr)
+			incomingConnections <- addr
 		}
-		time.Sleep(120 * time.Second)
+		time.Sleep(20 * time.Second)
 	}
 }
 
