@@ -122,6 +122,6 @@ func (m Cancel) Format() []byte {
 
 func uint32ToByteSlice(v uint32) []byte {
 	buf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(buf, v)
+	binary.BigEndian.PutUint32(buf, v)
 	return buf
 }

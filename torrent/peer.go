@@ -42,15 +42,31 @@ func SendMessage(conn net.Conn, msg Message) {
 	conn.Write(msg.Format())
 }
 
+func ReadMessage(conn net.Conn) (Message, error) {
+	lenBuf := make([]byte, 4)
+	_, err := conn.Read(lenBuf)
+	if err != nil {
+		return nil, err
+	}
+	length := binary.BigEndian.Uint32(lenBuf[0:4])
+	buf := make([]byte, length)
+	_, err = conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMessage(append(lenBuf, buf...)), nil
+}
+
 // ParseMessage returns a struct that implements Message containing all relevant information for a
 // peer message. TODO: Currently returns nil if the parse fails. Should return some kind of error I
 // think instead.
 func ParseMessage(data []byte) Message {
+	fmt.Println(data)
 	// Can't possibly be good data if we don't even have a length.
 	if len(data) < 4 {
 		return nil
 	}
-	length := binary.LittleEndian.Uint32(data[0:4])
+	length := binary.BigEndian.Uint32(data[0:4])
 	if length == 0 {
 		return KeepAlive{}
 	}
@@ -71,13 +87,13 @@ func ParseMessage(data []byte) Message {
 		}
 	} else if length == 5 {
 		if data[4] == 4 {
-			pieceIndex := binary.LittleEndian.Uint32(data[5:9])
+			pieceIndex := binary.BigEndian.Uint32(data[5:9])
 			return Have{PieceIndex: pieceIndex}
 		}
 	} else if length == 13 {
-		index := binary.LittleEndian.Uint32(data[5:9])
-		begin := binary.LittleEndian.Uint32(data[9:13])
-		length := binary.LittleEndian.Uint32(data[13:17])
+		index := binary.BigEndian.Uint32(data[5:9])
+		begin := binary.BigEndian.Uint32(data[9:13])
+		length := binary.BigEndian.Uint32(data[13:17])
 		if data[4] == 6 {
 			return Request{Index: index, Begin: begin, Length: length}
 		} else if data[4] == 8 {
@@ -87,8 +103,8 @@ func ParseMessage(data []byte) Message {
 	if data[4] == 5 {
 		return Bitfield{Data: data[5 : 5+length-1]}
 	} else if data[4] == 7 {
-		index := binary.LittleEndian.Uint32(data[5:9])
-		begin := binary.LittleEndian.Uint32(data[9:13])
+		index := binary.BigEndian.Uint32(data[5:9])
+		begin := binary.BigEndian.Uint32(data[9:13])
 		return Piece{Index: index, Begin: begin, Block: data[13 : 13+length-9]}
 	}
 	return nil
@@ -105,7 +121,7 @@ func sendHandshake(conn net.Conn, infoHash string, peerID string) error {
 }
 
 func receiveHandshake(conn net.Conn, infoHash string) error {
-	reply := make([]byte, 128)
+	reply := make([]byte, 68)
 	_, err := conn.Read(reply)
 	if err != nil {
 		return err

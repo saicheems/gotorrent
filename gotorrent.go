@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/codegangsta/cli"
@@ -51,7 +52,7 @@ func Start(localPort string, filePath string) error {
 	}
 	incomingAddresses := make(chan string)
 	go Announcer(t, incomingAddresses)
-	go PeerManager(localPort, incomingAddresses)
+	go PeerManager(t, localPort, incomingAddresses)
 	fmt.Scanf("\n")
 	return nil
 }
@@ -59,7 +60,7 @@ func Start(localPort string, filePath string) error {
 // PeerManager starts a service that connects to peers as they come in and spins up peer handling
 // threads. If we're connected to the maximum number of peers configured, the service will reject
 // or close incoming connections.
-func PeerManager(localPort string, incomingAddresses chan string) error {
+func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan string) error {
 	totalConnections := 0
 	peerQuit := make(chan bool) // Channel peers signal on when they die.
 	incomingConnections := make(chan net.Conn)
@@ -86,7 +87,7 @@ func PeerManager(localPort string, incomingAddresses chan string) error {
 		select {
 		case in := <-incomingConnections:
 			if totalConnections < maxConnections {
-				go Talker(in, peerQuit)
+				go Talker(t, in, peerQuit)
 				totalConnections++
 			} else {
 				conn := <-incomingConnections
@@ -100,7 +101,7 @@ func PeerManager(localPort string, incomingAddresses chan string) error {
 				conn, err := torrent.Connect(in)
 				fmt.Println("Got incoming address...", err)
 				if err == nil {
-					go Talker(conn, peerQuit)
+					go Talker(t, conn, peerQuit)
 					totalConnections++
 				}
 			}
@@ -111,8 +112,22 @@ func PeerManager(localPort string, incomingAddresses chan string) error {
 	return nil
 }
 
-func Talker(conn net.Conn, peerQuit chan bool) {
+func Talker(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
 	fmt.Println("Talking to peer.")
+	err := torrent.Handshake(conn, t.MetaInfo.InfoHash, t.PeerID)
+	if err == nil {
+		for {
+			// Do work.
+			msg, err := torrent.ReadMessage(conn)
+			if err != nil {
+				continue
+			}
+			if msg != nil {
+				fmt.Println(reflect.TypeOf(msg))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	conn.Close()
 	peerQuit <- true
 	fmt.Println("Quit peer.")
