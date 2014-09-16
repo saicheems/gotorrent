@@ -49,6 +49,10 @@ func ReadMessage(conn net.Conn) (Message, error) {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(lenBuf[0:4])
+	// We should kill connections for messages that have absurd length.
+	if length > 1<<15 {
+		return nil, errors.New("length is too large")
+	}
 	buf := make([]byte, length)
 	_, err = conn.Read(buf)
 	if err != nil {

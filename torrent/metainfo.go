@@ -3,6 +3,7 @@ package torrent
 import (
 	"bytes"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"io"
 
@@ -57,6 +58,10 @@ func Parse(r io.Reader) (*MetaInfo, error) {
 	m.InfoHash, err = computeSha1Hash(obj)
 	if err != nil {
 		return nil, err
+	}
+	// TODO: Support this!
+	if m.Info.Files != nil {
+		return nil, errors.New("no support for multi-file torrents yet :(")
 	}
 	return m, nil
 }
