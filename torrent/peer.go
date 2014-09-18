@@ -37,9 +37,11 @@ func Handshake(conn net.Conn, infoHash string, peerID string) error {
 	return nil
 }
 
-// SendMessage writes the byte formatted Message to the provided connection.
-func SendMessage(conn net.Conn, msg Message) {
-	conn.Write(msg.Format())
+// SendMessage writes the byte formatted Message to the provided connection. It returns an error if
+// there was a problem sending the data.
+func SendMessage(conn net.Conn, msg Message) error {
+	_, err := conn.Write(msg.Format())
+	return err
 }
 
 func ReadMessage(conn net.Conn) (Message, error) {
@@ -51,9 +53,11 @@ func ReadMessage(conn net.Conn) (Message, error) {
 	length := binary.BigEndian.Uint32(lenBuf[0:4])
 	// We should kill connections for messages that have absurd length.
 	if length > 1<<15 {
+		fmt.Println("Got message of length", length)
 		return nil, errors.New("length is too large")
 	}
 	buf := make([]byte, length)
+	// TODO: Check if read length is equal to actual length?
 	_, err = conn.Read(buf)
 	if err != nil {
 		return nil, err

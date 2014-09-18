@@ -15,6 +15,8 @@ import (
 const (
 	maxSeekConnections = 1
 	maxConnections     = 55
+	keepAliveTimeout   = 110
+	announcePeriod     = 200
 )
 
 func main() {
@@ -46,10 +48,15 @@ func Start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
-	t, err := torrent.New(generatePeerID(), localPort, f)
+	t, err := torrent.New(GeneratePeerID(), localPort, f)
 	if err != nil {
 		return err
 	}
+
+	fmt.Println(t.MetaInfo.Info.PieceLength)
+	fmt.Println(t.MetaInfo.Info.Length)
+	fmt.Println(len(t.MetaInfo.Info.Pieces) / 20)
+
 	incomingAddresses := make(chan string)
 	go Announcer(t, incomingAddresses)
 	go PeerManager(t, localPort, incomingAddresses)
@@ -87,7 +94,7 @@ func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan st
 		select {
 		case in := <-incomingConnections:
 			if totalConnections < maxConnections {
-				go Talker(t, in, peerQuit)
+				go Peer(t, in, peerQuit)
 				totalConnections++
 			} else {
 				conn := <-incomingConnections
@@ -99,33 +106,42 @@ func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan st
 		case in := <-incomingAddresses:
 			if totalConnections < maxSeekConnections {
 				conn, err := torrent.Connect(in)
-				fmt.Println("Got incoming address...", err)
+				fmt.Println("Got incoming address...", conn)
 				if err == nil {
-					go Talker(t, conn, peerQuit)
+					go Peer(t, conn, peerQuit)
 					totalConnections++
 				}
 			}
 		default:
 		}
+		// Sleep for a bit so we don't hog up the goroutine scheduler.
 		time.Sleep(100 * time.Millisecond)
 	}
 	return nil
 }
 
-func Talker(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
+// Peer starts a new Reader and Sender for a connection.
+func Peer(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
+	go Reader(t, conn, peerQuit)
+	go Sender(conn, make(chan torrent.Message))
+}
+
+func Reader(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
 	fmt.Println("Talking to peer.")
 	err := torrent.Handshake(conn, t.MetaInfo.InfoHash, t.PeerID)
 	if err == nil {
 		for {
-			// Do work.
+			// Deadline kills read with an error if we've waited too long without any
+			// messages (2 minutes).
+			conn.SetReadDeadline(time.Now().Add(time.Second * keepAliveTimeout))
 			msg, err := torrent.ReadMessage(conn)
 			if err != nil {
-				continue
+				fmt.Println("Killing...", err)
+				break
 			}
 			if msg != nil {
 				fmt.Println(reflect.TypeOf(msg))
 			}
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	conn.Close()
@@ -133,6 +149,30 @@ func Talker(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
 	fmt.Println("Quit peer.")
 }
 
+// Sender delivers messages that come in on the message channel. It also sends keep-alive messages
+// periodically if a message hasn't come in for a fixed time period.
+func Sender(conn net.Conn, msg chan torrent.Message) {
+	for {
+		select {
+		case m := <-msg:
+			conn.SetWriteDeadline(time.Now().Add(time.Second))
+			err := torrent.SendMessage(conn, m)
+			if err != nil {
+				break
+			}
+		case <-time.After(time.Second * keepAliveTimeout):
+			conn.SetWriteDeadline(time.Now().Add(time.Second))
+			err := torrent.SendMessage(conn, &torrent.KeepAlive{})
+			fmt.Println("Sending keep-alive.", err, err == nil)
+			if err != nil {
+				return
+			}
+		}
+	}
+}
+
+// Announcer periodically announces to the tracker and pulls a new peer list. It passes this list to
+// the peer manager.
 func Announcer(t *torrent.Torrent, incomingConnections chan string) {
 	for {
 		annResp, err := torrent.Announce(t.GetAnnounceURL())
@@ -143,11 +183,12 @@ func Announcer(t *torrent.Torrent, incomingConnections chan string) {
 			fmt.Println(addr)
 			incomingConnections <- addr
 		}
-		time.Sleep(20 * time.Second)
+		time.Sleep(time.Second * announcePeriod)
 	}
 }
 
-func generatePeerID() string {
+// GeneratePeerID returns a 20 character random string to serve as the PeerID of the client.
+func GeneratePeerID() string {
 	peerId := make([]byte, 20)
 	rand.Read(peerId)
 	return string(peerId)

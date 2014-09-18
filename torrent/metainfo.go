@@ -26,6 +26,7 @@ type MetaInfo struct {
 	InfoHash string
 }
 
+// InfoDict implements the info dictionary portion of a .torrent metainfo.
 type InfoDict struct {
 	PieceLength int64      "piece length"
 	Pieces      string     "pieces"
@@ -36,6 +37,7 @@ type InfoDict struct {
 	Files       []FileDict "files"
 }
 
+// FileDict implements the information encoded in a multi-file torrent.
 type FileDict struct {
 	Length int64    "length"
 	Md5Sum string   "md5sum"

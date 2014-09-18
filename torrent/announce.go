@@ -23,8 +23,8 @@ type AnnounceResponse struct {
 	Peers          string "peers"
 }
 
-// Announce sends an announce signal to a url and returns the response formatted to an
-// AnnounceResponse.
+// Announce sends an announce signal to a url and returns an AnnounceResponse. If there's a failure
+// then the appropriate error is returned.
 func Announce(url string) (*AnnounceResponse, error) {
 	res, err := http.Get(url)
 	if err != nil {
@@ -41,7 +41,7 @@ func Announce(url string) (*AnnounceResponse, error) {
 }
 
 // GetAnnounceURL returns the url to query the tracker for an announce with all parameters set
-// according to the passed client and torrent structs.
+// according to the Torrent.
 func (t *Torrent) GetAnnounceURL() string {
 	v := url.Values{}
 	v.Add("peer_id", t.PeerID)
@@ -61,7 +61,7 @@ func (t *Torrent) GetAnnounceURL() string {
 	return fmt.Sprintf("%s?%s", t.AnnounceURL, v.Encode())
 }
 
-// GetPeerAddresses returns a string list containing the addresses of all peers in the
+// GetPeerAddresses returns a string list containing the formatted addresses of all peers in the
 // AnnounceResponse.
 func (response *AnnounceResponse) PeerAddresses() []string {
 	peers := response.Peers
