@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/codegangsta/cli"
+	"github.com/saicheems/gotorrent/bitset"
 	"github.com/saicheems/gotorrent/torrent"
 )
 
@@ -130,6 +131,9 @@ func Reader(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
 	fmt.Println("Talking to peer.")
 	err := torrent.Handshake(conn, t.MetaInfo.InfoHash, t.PeerID)
 	if err == nil {
+		l := t.MetaInfo.Info.Length / t.MetaInfo.Info.PieceLength
+		bs := bitset.New(int(l))
+		torrent.SendMessage(conn, &torrent.Bitfield{bs.Bytes()})
 		for {
 			// Deadline kills read with an error if we've waited too long without any
 			// messages (2 minutes).
