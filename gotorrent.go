@@ -17,8 +17,15 @@ const (
 	maxSeekConnections = 1
 	maxConnections     = 55
 	keepAliveTimeout   = 110
-	announcePeriod     = 200
+	announcePeriod     = 20
 )
+
+type Client struct {
+	LocalPort string
+	Torrent   *torrent.Torrent
+	OutFile   *os.File
+	BitSet    *bitset.BitSet
+}
 
 func main() {
 	app := cli.NewApp()
@@ -53,14 +60,22 @@ func Start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
-
-	fmt.Println(t.MetaInfo.Info.PieceLength)
-	fmt.Println(t.MetaInfo.Info.Length)
-	fmt.Println(len(t.MetaInfo.Info.Pieces) / 20)
-
+	c := new(Client)
+	c.LocalPort = localPort
+	c.Torrent = t
+	out, err := os.Create(t.MetaInfo.Info.Name)
+	if err != nil {
+		return err
+	}
+	c.OutFile = out
+	b := bitset.New(int(t.MetaInfo.Info.Length / t.MetaInfo.Info.PieceLength))
+	c.BitSet = b
+	fmt.Println("Created file with", len(b.Bytes()), "pieces")
 	incomingAddresses := make(chan string)
+	incomingPieces := make(chan torrent.Piece)
 	go Announcer(t, incomingAddresses)
-	go PeerManager(t, localPort, incomingAddresses)
+	go PeerManager(c, incomingAddresses, incomingPieces)
+	go Writer(c, incomingPieces)
 	fmt.Scanf("\n")
 	return nil
 }
@@ -68,12 +83,12 @@ func Start(localPort string, filePath string) error {
 // PeerManager starts a service that connects to peers as they come in and spins up peer handling
 // threads. If we're connected to the maximum number of peers configured, the service will reject
 // or close incoming connections.
-func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan string) error {
+func PeerManager(c *Client, incomingAddresses chan string, incomingPieces chan torrent.Piece) error {
 	totalConnections := 0
 	peerQuit := make(chan bool) // Channel peers signal on when they die.
 	incomingConnections := make(chan net.Conn)
 
-	ln, err := net.Listen("tcp", localPort)
+	ln, err := net.Listen("tcp", c.LocalPort)
 	if err != nil {
 		return err
 	}
@@ -95,7 +110,7 @@ func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan st
 		select {
 		case in := <-incomingConnections:
 			if totalConnections < maxConnections {
-				go Peer(t, in, peerQuit)
+				go Peer(c, in, incomingPieces, peerQuit)
 				totalConnections++
 			} else {
 				conn := <-incomingConnections
@@ -109,7 +124,7 @@ func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan st
 				conn, err := torrent.Connect(in)
 				fmt.Println("Got incoming address...", conn)
 				if err == nil {
-					go Peer(t, conn, peerQuit)
+					go Peer(c, conn, incomingPieces, peerQuit)
 					totalConnections++
 				}
 			}
@@ -121,53 +136,96 @@ func PeerManager(t *torrent.Torrent, localPort string, incomingAddresses chan st
 	return nil
 }
 
-// Peer starts a new Reader and Sender for a connection.
-func Peer(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
-	go Reader(t, conn, peerQuit)
-	go Sender(conn, make(chan torrent.Message))
+func Writer(c *Client, incomingPieces chan torrent.Piece) {
+	/*pieceLength := c.Torrent.MetaInfo.Info.PieceLength
+	for {
+		piece, ok := <-incomingPieces
+		if !ok {
+			break
+		}
+		c.BitSet.Set(int(piece.Index))
+		c.OutFile.WriteAt(piece.Block, pieceLength*int64(piece.Index+piece.Begin))
+		fmt.Println("Wrote block at index", piece.Index, ".")
+	}*/
 }
 
-func Reader(t *torrent.Torrent, conn net.Conn, peerQuit chan bool) {
-	fmt.Println("Talking to peer.")
+// Peer starts a new Reader and Sender for a connection.
+func Peer(c *Client, conn net.Conn, incomingPieces chan torrent.Piece, peerQuit chan bool) {
+	t := c.Torrent
+	msgIn := make(chan torrent.Message)
+	msgOut := make(chan torrent.Message)
+	defer func() { peerQuit <- true; fmt.Println("Quit and closed peer.") }()
+	defer conn.Close()
 	err := torrent.Handshake(conn, t.MetaInfo.InfoHash, t.PeerID)
-	if err == nil {
-		l := t.MetaInfo.Info.Length / t.MetaInfo.Info.PieceLength
-		bs := bitset.New(int(l))
-		torrent.SendMessage(conn, &torrent.Bitfield{bs.Bytes()})
-		for {
-			// Deadline kills read with an error if we've waited too long without any
-			// messages (2 minutes).
-			conn.SetReadDeadline(time.Now().Add(time.Second * keepAliveTimeout))
-			msg, err := torrent.ReadMessage(conn)
-			if err != nil {
-				fmt.Println("Killing...", err)
-				break
+	if err != nil {
+		return
+	}
+	go Reader(conn, msgIn)
+	go Sender(conn, msgOut)
+	msgOut <- torrent.Bitfield{c.BitSet.Bytes()}
+	msgOut <- torrent.Interested{}
+	for {
+		select {
+		case msg, ok := <-msgIn:
+			if !ok {
+				fmt.Println("Reader closed.")
+				return
+			} else {
+				fmt.Println("Reading...", reflect.TypeOf(msg))
+				switch m := msg.(type) {
+				case torrent.Piece:
+					select {
+					case incomingPieces <- m:
+					default:
+					}
+					//fmt.Println(m.Block[0])
+					//msgOut <- torrent.Request{uint32(c.BitSet.FirstZeroBit() + 1), 0, 1 << 14}
+					//fmt.Println("Requesting piece", uint32(c.BitSet.FirstZeroBit()))
+				case torrent.Unchoke:
+					time.Sleep(2000 * time.Millisecond)
+					msgOut <- torrent.Request{uint32(c.BitSet.FirstZeroBit()), 0, 1 << 14}
+				default:
+				}
 			}
-			if msg != nil {
-				fmt.Println(reflect.TypeOf(msg))
-			}
+		default:
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	fmt.Println("Quitting peer.")
+}
+
+func Reader(conn net.Conn, msgIn chan torrent.Message) {
+	for {
+		// Deadline kills read with an error if we've waited too long without any
+		// messages (2 minutes).
+		conn.SetReadDeadline(time.Now().Add(time.Second * keepAliveTimeout))
+		msg, err := torrent.ReadMessage(conn)
+		if err != nil {
+			fmt.Println("Reading quitting:", err)
+			close(msgIn)
+			break
+		}
+		if msg != nil {
+			msgIn <- msg
 		}
 	}
-	conn.Close()
-	peerQuit <- true
-	fmt.Println("Quit peer.")
 }
 
 // Sender delivers messages that come in on the message channel. It also sends keep-alive messages
 // periodically if a message hasn't come in for a fixed time period.
-func Sender(conn net.Conn, msg chan torrent.Message) {
+func Sender(conn net.Conn, msgOut chan torrent.Message) {
 	for {
+		var m torrent.Message
 		select {
-		case m := <-msg:
-			conn.SetWriteDeadline(time.Now().Add(time.Second))
+		case m = <-msgOut:
+			fmt.Println("Sending...", reflect.TypeOf(m), m)
 			err := torrent.SendMessage(conn, m)
 			if err != nil {
-				break
+				return
 			}
+			fmt.Println("Sent message")
 		case <-time.After(time.Second * keepAliveTimeout):
-			conn.SetWriteDeadline(time.Now().Add(time.Second))
-			err := torrent.SendMessage(conn, &torrent.KeepAlive{})
-			fmt.Println("Sending keep-alive.", err, err == nil)
+			err := torrent.SendMessage(conn, torrent.KeepAlive{})
 			if err != nil {
 				return
 			}
@@ -179,6 +237,7 @@ func Sender(conn net.Conn, msg chan torrent.Message) {
 // the peer manager.
 func Announcer(t *torrent.Torrent, incomingConnections chan string) {
 	for {
+		fmt.Println("Announcing...")
 		annResp, err := torrent.Announce(t.GetAnnounceURL())
 		if err != nil {
 			continue

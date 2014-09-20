@@ -58,7 +58,8 @@ func ReadMessage(conn net.Conn) (Message, error) {
 	}
 	buf := make([]byte, length)
 	// TODO: Check if read length is equal to actual length?
-	_, err = conn.Read(buf)
+	n, err := conn.Read(buf)
+	fmt.Println(n, err)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +70,6 @@ func ReadMessage(conn net.Conn) (Message, error) {
 // peer message. TODO: Currently returns nil if the parse fails. Should return some kind of error I
 // think instead.
 func ParseMessage(data []byte) Message {
-	fmt.Println(data)
 	// Can't possibly be good data if we don't even have a length.
 	if len(data) < 4 {
 		return nil
