@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	maxSeekConnections = 1
+	maxSeekConnections = 5
 	maxConnections     = 55
 	keepAliveTimeout   = 110
 	announcePeriod     = 20
@@ -67,15 +67,17 @@ func Start(localPort string, filePath string) error {
 	if err != nil {
 		return err
 	}
+
 	c.OutFile = out
 	b := bitset.New(int(t.MetaInfo.Info.Length / t.MetaInfo.Info.PieceLength))
 	c.BitSet = b
-	fmt.Println("Created file with", len(b.Bytes()), "pieces")
+	fmt.Println("Created file with", len(b.Bytes()), "pieces. Piece length:", t.MetaInfo.Info.PieceLength)
 	incomingAddresses := make(chan string)
-	incomingPieces := make(chan torrent.Piece)
+	incomingPieces := make(chan torrent.Piece, 256)
+	outgoingRequests := make(chan torrent.Request, 256)
 	go Announcer(t, incomingAddresses)
-	go PeerManager(c, incomingAddresses, incomingPieces)
-	go Writer(c, incomingPieces)
+	go PeerManager(c, incomingAddresses, incomingPieces, outgoingRequests)
+	go Writer(c, incomingPieces, outgoingRequests)
 	fmt.Scanf("\n")
 	return nil
 }
@@ -83,7 +85,7 @@ func Start(localPort string, filePath string) error {
 // PeerManager starts a service that connects to peers as they come in and spins up peer handling
 // threads. If we're connected to the maximum number of peers configured, the service will reject
 // or close incoming connections.
-func PeerManager(c *Client, incomingAddresses chan string, incomingPieces chan torrent.Piece) error {
+func PeerManager(c *Client, incomingAddresses chan string, incomingPieces chan torrent.Piece, outgoingRequests chan torrent.Request) error {
 	totalConnections := 0
 	peerQuit := make(chan bool) // Channel peers signal on when they die.
 	incomingConnections := make(chan net.Conn)
@@ -110,7 +112,7 @@ func PeerManager(c *Client, incomingAddresses chan string, incomingPieces chan t
 		select {
 		case in := <-incomingConnections:
 			if totalConnections < maxConnections {
-				go Peer(c, in, incomingPieces, peerQuit)
+				go Peer(c, in, incomingPieces, outgoingRequests, peerQuit)
 				totalConnections++
 			} else {
 				conn := <-incomingConnections
@@ -124,7 +126,7 @@ func PeerManager(c *Client, incomingAddresses chan string, incomingPieces chan t
 				conn, err := torrent.Connect(in)
 				fmt.Println("Got incoming address...", conn)
 				if err == nil {
-					go Peer(c, conn, incomingPieces, peerQuit)
+					go Peer(c, conn, incomingPieces, outgoingRequests, peerQuit)
 					totalConnections++
 				}
 			}
@@ -136,21 +138,56 @@ func PeerManager(c *Client, incomingAddresses chan string, incomingPieces chan t
 	return nil
 }
 
-func Writer(c *Client, incomingPieces chan torrent.Piece) {
-	/*pieceLength := c.Torrent.MetaInfo.Info.PieceLength
+func Writer(c *Client, incomingPieces chan torrent.Piece, outgoingRequests chan torrent.Request) {
+	pieceIndex := 0
+	pieceLength := c.Torrent.MetaInfo.Info.PieceLength
+	buf := make([]byte, pieceLength)
+	bs := bitset.New(int(pieceLength / (1 << 14)))
+	timeout := make([]time.Time, 32)
+	for n := 0; n < 32; n++ {
+		timeout[n] = time.Now()
+	}
 	for {
-		piece, ok := <-incomingPieces
-		if !ok {
-			break
+		select {
+		case piece, ok := <-incomingPieces:
+			if !ok {
+				break
+			}
+			fmt.Println("Copied part of piece", pieceIndex, "at offset", piece.Begin)
+			copy(buf[piece.Begin:int(piece.Begin)+len(piece.Block)], piece.Block)
+			bs.Set(int(piece.Begin / (1 << 14)))
+		default:
 		}
-		c.BitSet.Set(int(piece.Index))
-		c.OutFile.WriteAt(piece.Block, pieceLength*int64(piece.Index+piece.Begin))
-		fmt.Println("Wrote block at index", piece.Index, ".")
-	}*/
+		if bs.FirstZeroBit() < 0 {
+			fmt.Println("Wrote piece", pieceIndex)
+			c.BitSet.Set(pieceIndex)
+			c.OutFile.WriteAt(buf, pieceLength*int64(pieceIndex))
+			pieceIndex++
+			bs = bitset.New(int(pieceLength / (1 << 14)))
+			buf = make([]byte, pieceLength)
+			for n := 0; n < 32; n++ {
+				timeout[n] = time.Now()
+			}
+		} else {
+			for n, t := range timeout {
+				if !bs.Check(n) {
+					if time.Now().After(t) {
+						fmt.Println("New outgoing request... pieceIndex:", pieceIndex, "offset:", n*(1<<14), "length:", 1<<14)
+						select {
+						case outgoingRequests <- torrent.Request{uint32(pieceIndex), uint32(n * (1 << 14)), 1 << 14}:
+						default:
+						}
+						timeout[n] = time.Now().Add(120 * time.Second)
+					}
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // Peer starts a new Reader and Sender for a connection.
-func Peer(c *Client, conn net.Conn, incomingPieces chan torrent.Piece, peerQuit chan bool) {
+func Peer(c *Client, conn net.Conn, incomingPieces chan torrent.Piece, outgoingRequests chan torrent.Request, peerQuit chan bool) {
 	t := c.Torrent
 	msgIn := make(chan torrent.Message)
 	msgOut := make(chan torrent.Message)
@@ -164,6 +201,7 @@ func Peer(c *Client, conn net.Conn, incomingPieces chan torrent.Piece, peerQuit 
 	go Sender(conn, msgOut)
 	msgOut <- torrent.Bitfield{c.BitSet.Bytes()}
 	msgOut <- torrent.Interested{}
+	choke := true
 	for {
 		select {
 		case msg, ok := <-msgIn:
@@ -173,21 +211,30 @@ func Peer(c *Client, conn net.Conn, incomingPieces chan torrent.Piece, peerQuit 
 			} else {
 				fmt.Println("Reading...", reflect.TypeOf(msg))
 				switch m := msg.(type) {
+				case torrent.Choke:
+					choke = true
+				case torrent.Unchoke:
+					choke = false
+				case torrent.Interested:
+				case torrent.NotInterested:
 				case torrent.Piece:
+					// Send out the piece to the writer. Don't block.
 					select {
 					case incomingPieces <- m:
 					default:
 					}
-					//fmt.Println(m.Block[0])
-					//msgOut <- torrent.Request{uint32(c.BitSet.FirstZeroBit() + 1), 0, 1 << 14}
-					//fmt.Println("Requesting piece", uint32(c.BitSet.FirstZeroBit()))
-				case torrent.Unchoke:
-					time.Sleep(2000 * time.Millisecond)
-					msgOut <- torrent.Request{uint32(c.BitSet.FirstZeroBit()), 0, 1 << 14}
 				default:
 				}
 			}
 		default:
+		}
+		if !choke {
+			select {
+			case m := <-outgoingRequests:
+				fmt.Println("Added outgoing request to msg queue.")
+				msgOut <- m
+			default:
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

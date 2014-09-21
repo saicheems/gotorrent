@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -46,7 +47,7 @@ func SendMessage(conn net.Conn, msg Message) error {
 
 func ReadMessage(conn net.Conn) (Message, error) {
 	lenBuf := make([]byte, 4)
-	_, err := conn.Read(lenBuf)
+	_, err := io.ReadFull(conn, lenBuf)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +59,7 @@ func ReadMessage(conn net.Conn) (Message, error) {
 	}
 	buf := make([]byte, length)
 	// TODO: Check if read length is equal to actual length?
-	n, err := conn.Read(buf)
+	n, err := io.ReadFull(conn, buf)
 	fmt.Println(n, err)
 	if err != nil {
 		return nil, err
