@@ -177,7 +177,7 @@ func Writer(c *Client, incomingPieces chan torrent.Piece, outgoingRequests chan 
 						case outgoingRequests <- torrent.Request{uint32(pieceIndex), uint32(n * (1 << 14)), 1 << 14}:
 						default:
 						}
-						timeout[n] = time.Now().Add(120 * time.Second)
+						timeout[n] = time.Now().Add(10 * time.Second)
 					}
 				}
 			}
